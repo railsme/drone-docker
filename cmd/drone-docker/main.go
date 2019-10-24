@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -125,7 +127,7 @@ func main() {
 			Usage:    "build tags",
 			Value:    &cli.StringSlice{"latest"},
 			EnvVar:   "PLUGIN_TAG,PLUGIN_TAGS",
-			FilePath: ".tags",
+			//FilePath: ".tags",
 		},
 		cli.BoolFlag{
 			Name:   "tags.auto",
@@ -176,6 +178,11 @@ func main() {
 			Name:   "repo",
 			Usage:  "docker repository",
 			EnvVar: "PLUGIN_REPO",
+		},
+		cli.StringFlag{
+			Name:   "images",
+			Usage:  "list of images to build",
+			EnvVar: "PLUGIN_IMAGES",
 		},
 		cli.StringSliceFlag{
 			Name:   "custom-labels",
@@ -231,6 +238,11 @@ func main() {
 }
 
 func run(c *cli.Context) error {
+	var images []docker.Image
+	if err := json.Unmarshal([]byte(c.String("images")), &images); err != nil {
+		fmt.Println(err.Error())
+	}
+
 	plugin := docker.Plugin{
 		Dryrun:  c.Bool("dry-run"),
 		Cleanup: c.BoolT("docker.purge"),
@@ -242,7 +254,6 @@ func run(c *cli.Context) error {
 		},
 		Build: docker.Build{
 			Remote:      c.String("remote.url"),
-			Name:        c.String("commit.sha"),
 			Dockerfile:  c.String("dockerfile"),
 			Context:     c.String("context"),
 			Tags:        c.StringSlice("tags"),
@@ -253,7 +264,7 @@ func run(c *cli.Context) error {
 			Pull:        c.BoolT("pull-image"),
 			CacheFrom:   c.StringSlice("cache-from"),
 			Compress:    c.Bool("compress"),
-			Repo:        c.String("repo"),
+			Images:      images,
 			Labels:      c.StringSlice("custom-labels"),
 			LabelSchema: c.StringSlice("label-schema"),
 			NoCache:     c.Bool("no-cache"),

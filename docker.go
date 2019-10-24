@@ -34,10 +34,16 @@ type (
 		Email    string // Docker registry email
 	}
 
+	Image struct {
+		Target string `json:"target,omitempty"`
+		Name   string `json:"name"`
+		Repo   string `json:"repository"`
+	}
+
 	// Build defines Docker build parameters.
 	Build struct {
 		Remote      string   // Git remote URL
-		Name        string   // Docker build using default named tag
+		Images      []Image  // Docker build using default named tags
 		Dockerfile  string   // Docker build Dockerfile
 		Context     string   // Docker build context
 		Tags        []string // Docker build tags
@@ -48,7 +54,6 @@ type (
 		Pull        bool     // Docker build pull
 		CacheFrom   []string // Docker build cache-from
 		Compress    bool     // Docker build compress
-		Repo        string   // Docker build repository
 		LabelSchema []string // label-schema Label map
 		Labels      []string // Label map
 		NoCache     bool     // Docker build no-cache
@@ -109,20 +114,23 @@ func (p Plugin) Exec() error {
 	for _, img := range p.Build.CacheFrom {
 		cmds = append(cmds, commandPull(img))
 	}
+	for i := range p.Build.Images {
+		cmds = append(cmds, commandBuild(p.Build, i)) // docker build
 
-	cmds = append(cmds, commandBuild(p.Build)) // docker build
+		for _, tag := range p.Build.Tags {
+			cmds = append(cmds, commandTag(p.Build, tag, i)) // docker tag
 
-	for _, tag := range p.Build.Tags {
-		cmds = append(cmds, commandTag(p.Build, tag)) // docker tag
-
-		if p.Dryrun == false {
-			cmds = append(cmds, commandPush(p.Build, tag)) // docker push
+			if p.Dryrun == false {
+				cmds = append(cmds, commandPush(p.Build, tag, i)) // docker push
+			}
 		}
 	}
 
 	if p.Cleanup {
-		cmds = append(cmds, commandRmi(p.Build.Name)) // docker rmi
-		cmds = append(cmds, commandPrune())           // docker system prune -f
+		for _, image := range p.Build.Images {
+			cmds = append(cmds, commandRmi(image.Name)) // docker rmi
+			cmds = append(cmds, commandPrune())         // docker system prune -f
+		}
 	}
 
 	// execute all commands in batch mode.
@@ -185,14 +193,17 @@ func commandInfo() *exec.Cmd {
 }
 
 // helper function to create the docker build command.
-func commandBuild(build Build) *exec.Cmd {
+func commandBuild(build Build, index int) *exec.Cmd {
 	args := []string{
 		"build",
 		"--rm=true",
 		"-f", build.Dockerfile,
-		"-t", build.Name,
+		"-t", build.Images[index].Name,
+		"-t", build.Images[index].Name,
 	}
-
+	if build.Images[index].Target != "" {
+		args = append(args, fmt.Sprintf("--target=%s", build.Images[index].Target))
+	}
 	args = append(args, build.Context)
 	if build.Squash {
 		args = append(args, "--squash")
@@ -215,14 +226,11 @@ func commandBuild(build Build) *exec.Cmd {
 	for _, arg := range build.Args {
 		args = append(args, "--build-arg", arg)
 	}
-	if build.Target != "" {
-		args = append(args, "--target", build.Target)
-	}
 
 	labelSchema := []string{
 		"schema-version=1.0",
 		fmt.Sprintf("build-date=%s", time.Now().Format(time.RFC3339)),
-		fmt.Sprintf("vcs-ref=%s", build.Name),
+		fmt.Sprintf("vcs-ref=%s", build.Images[index].Name),
 		fmt.Sprintf("vcs-url=%s", build.Remote),
 	}
 
@@ -287,10 +295,10 @@ func hasProxyBuildArg(build *Build, key string) bool {
 }
 
 // helper function to create the docker tag command.
-func commandTag(build Build, tag string) *exec.Cmd {
+func commandTag(build Build, tag string, index int) *exec.Cmd {
 	var (
-		source = build.Name
-		target = fmt.Sprintf("%s:%s", build.Repo, tag)
+		source = build.Images[index].Name
+		target = fmt.Sprintf("%s:%s", build.Images[index].Repo, tag)
 	)
 	return exec.Command(
 		dockerExe, "tag", source, target,
@@ -298,8 +306,8 @@ func commandTag(build Build, tag string) *exec.Cmd {
 }
 
 // helper function to create the docker push command.
-func commandPush(build Build, tag string) *exec.Cmd {
-	target := fmt.Sprintf("%s:%s", build.Repo, tag)
+func commandPush(build Build, tag string, index int) *exec.Cmd {
+	target := fmt.Sprintf("%s:%s", build.Images[index].Repo, tag)
 	return exec.Command(dockerExe, "push", target)
 }
 
